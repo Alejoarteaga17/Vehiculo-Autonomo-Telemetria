@@ -1,13 +1,4 @@
-"""Cliente Python compatible con el servidor C (protocolo JSON).
 
-Principales correcciones respecto a versión anterior:
-- Mensaje HELLO ahora usa {"t":"HELLO","role":"...","token":"SECRETO_2025"} para admin.
-- Comandos usan campo "name" y nombres con guion bajo (p.ej. SPEED_UP) según servidor.
-- Se parsean mensajes de tipo TELEMETRY y DATA (el servidor emite TELEMETRY periódico
-  y DATA cuando respondemos a GET_DATA).
-- Se solicita un GET_DATA inicial tras el HELLO para obtener estado inmediato.
-- Se soporta modo OBSERVER sin botones.
-"""
 
 import socket
 import threading
@@ -20,8 +11,8 @@ import csv
 
 
 class VehiculoClient:
-    def __init__(self, host="127.0.0.1", port=5000, admin=False, token=None, auto_poll=True, poll_interval=10,
-                 log_dir="logs", log_format="csv"):
+    def __init__(self, host="127.0.0.1", port=8080, admin=False, token=None, auto_poll=True, poll_interval=10,
+                log_dir="logs", log_format="csv"):
         self.host = host
         self.port = port
         self.admin = admin
@@ -133,6 +124,8 @@ class VehiculoClient:
             return
         try:
             self._send_json({"t": "CMD", "name": name})
+            # Forzar refresh después del comando
+            self.request_data()
         except Exception as e:
             messagebox.showerror("Error enviando comando", str(e))
 
@@ -157,6 +150,7 @@ class VehiculoClient:
             # Mostrar breve feedback en etiqueta status
             if t == "ACK":
                 self.status_label.config(text=f"ACK {msg.get('name','')} OK")
+                print(f"[CMD] {msg.get('name')} → {t}")
             else:
                 reason = msg.get("reason", "?")
                 self.status_label.config(text=f"NACK {msg.get('name','')} ({reason})")
@@ -167,14 +161,25 @@ class VehiculoClient:
             print("[INFO]", msg)
 
     def _update_telemetry(self, msg, origin):
-        self.speed_label.config(text=f"Velocidad: {msg.get('speed','--')}")
-        self.battery_label.config(text=f"Batería: {msg.get('battery','--')}")
-        self.temp_label.config(text=f"Temperatura: {msg.get('temp','--')}")
-        self.dir_label.config(text=f"Dirección: {msg.get('dir','--')}")
+        speed = msg.get('speed', '--')
+        battery = msg.get('battery', '--')
+        temp = msg.get('temp', '--')
+        direction = msg.get('dir', '--')
+
+        # ==== Mostrar en terminal ====
+        print(f"[{time.strftime('%H:%M:%S')}] [{origin}] "
+            f"Vel: {speed} | Bat: {battery}% | Temp: {temp}° | Dir: {direction}")
+
+        # ==== Actualizar GUI ====
+        self.speed_label.config(text=f"Velocidad: {speed}")
+        self.battery_label.config(text=f"Batería: {battery}")
+        self.temp_label.config(text=f"Temperatura: {temp}")
+        self.dir_label.config(text=f"Dirección: {direction}")
         ts = msg.get('ts', int(time.time()))
         human = time.strftime('%H:%M:%S', time.localtime(ts))
         self.last_update_label.config(text=f"Última actualización: {human} ({origin})")
-        # Log local
+
+        # ==== Registrar en log ====
         self._log_telemetry(msg, origin)
 
     # ================= Logging =================
