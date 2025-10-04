@@ -1,0 +1,24 @@
+{
+    "server": {
+        "host": "127.0.0.1",
+        "port": 5000,
+        "timeout": 10,
+        "max_retries": 3,
+        "reconnect_delay": 5
+    },
+    "admin": {
+        "username": "admin",
+        "password": "SECRETO_2025"
+    },
+    "client": {
+        "mode": "admin",
+        "auto_connect": false,
+        "log_level": "INFO",
+        "protocol": "json"
+    },
+    "interface": {
+        "window_width": 400,
+        "window_height": 500,
+        "theme": "default"
+    }
+}
