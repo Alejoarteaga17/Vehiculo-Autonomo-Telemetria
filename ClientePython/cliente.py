@@ -234,7 +234,7 @@ class VehiculoClient:
                     self._log_writer.writerow([epoch, human, origin, speed, battery, temp, direction])
                     self._log_file.flush()
             else:
-                # mantenemos jsonl para logs
+                # mantenemos jsonl para logs, no para el protocolo
                 import json
                 record = {"ts": epoch, "human": human, "origin": origin, "speed": speed,
                           "battery": battery, "temp": temp, "dir": direction}

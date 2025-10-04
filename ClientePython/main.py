@@ -1,3 +1,15 @@
+"""Punto de entrada del cliente.
+
+Permite seleccionar rol (ADMIN u OBSERVER) desde la terminal antes de abrir la GUI.
+
+Uso básico:
+    python main.py              -> pregunta rol
+    python main.py admin        -> inicia como admin
+    python main.py observer     -> inicia como observer
+
+Si se elige ADMIN y no se provee token, solicitará uno (por defecto muestra sugerencia SECRETO_2025).
+"""
+
 import sys
 from cliente import VehiculoClient
 
