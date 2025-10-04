@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <errno.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
@@ -7,286 +8,442 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
-#include "protocol.h"
+#include <netinet/tcp.h>
+//#include "protocol.h"
 
-// ====== Estado del vehículo ======
+#define BACKLOG 128
+#define MAX_LINE 1024
+#define MAX_CLIENTS 20
+#define ADMIN_TOKEN "SECRETO_2025"
+#define TELEMETRY_PERIOD_SEC 10
+
+typedef enum { DIR_LEFT, DIR_RIGHT, DIR_STRAIGHT } direction_t;
+
 typedef struct {
-  int speed;     // km/h
-  int battery;   // %
-  int temp;      // °C
-  char dir[8];   // "LEFT","RIGHT","STRAIGHT"
-} vehicle_t;
+    int speed;       // km/h
+    int battery;     // %
+    int temp;        // °C
+    direction_t dir;
+} vehicle_state_t;
 
-static vehicle_t g_vehicle = {0, 100, 25, "STRAIGHT"};
-static pthread_mutex_t g_vehicle_mtx = PTHREAD_MUTEX_INITIALIZER;
+typedef enum { ROLE_OBSERVER=0, ROLE_ADMIN=1 } role_t;
 
-// ====== Registro de clientes ======
-typedef struct {
+typedef struct client_s {
     int fd;
-    char who[64];      // "ip:port"
+    struct sockaddr_storage addr;
+    socklen_t addrlen;
+    role_t role;
+    time_t connected_at;
+    bool subscribed;
     bool alive;
-    bool is_admin;
-    time_t last;
-    } client_t;
+    struct client_s* next;
+} client_t;
 
-    static client_t g_clients[MAX_CLIENTS];
-    static pthread_mutex_t g_clients_mtx = PTHREAD_MUTEX_INITIALIZER;
+// --- Globales ---
+static int g_listen_fd = -1;
+static FILE* g_logf = NULL;
+static pthread_mutex_t g_log_mtx = PTHREAD_MUTEX_INITIALIZER;
 
-    // ====== Logging JSON ======
-    static FILE *g_logf = NULL;
-    static void jlog(const char *type, const char *who, const char *fmt, ...) {
-    char msg[1024];
-    va_list ap; va_start(ap, fmt);
-    vsnprintf(msg, sizeof msg, fmt, ap);
-    va_end(ap);
-    time_t now=time(NULL);
-    fprintf(g_logf?g_logf:stderr,
-            "{\"ts\":%ld,\"type\":\"%s\",\"who\":\"%s\",\"msg\":\"%s\"}\n",
-            now, type, who?who:"-", msg);
-    fflush(g_logf?g_logf:stderr);
-    }
+static client_t* g_clients = NULL;
+static pthread_mutex_t g_clients_mtx = PTHREAD_MUTEX_INITIALIZER;
 
-    // ====== Util ======
-    static void add_client(int fd, const char *who) {
-    pthread_mutex_lock(&g_clients_mtx);
-    for (int i=0;i<MAX_CLIENTS;i++){
-    if (!g_clients[i].alive){
-        g_clients[i]=(client_t){.fd=fd,.alive=true,.is_admin=false};
-        snprintf(g_clients[i].who, sizeof g_clients[i].who, "%s", who);
-        g_clients[i].last=time(NULL);
-        break;
-    }
-    }
-    pthread_mutex_unlock(&g_clients_mtx);
-    }
+static vehicle_state_t g_state = { .speed=0, .battery=100, .temp=25, .dir=DIR_STRAIGHT };
+static pthread_mutex_t g_state_mtx = PTHREAD_MUTEX_INITIALIZER;
 
-    static void remove_client_fd(int fd){
-    pthread_mutex_lock(&g_clients_mtx);
-    for(int i=0;i<MAX_CLIENTS;i++){
-    if(g_clients[i].alive && g_clients[i].fd==fd){
-        g_clients[i].alive=false;
-        close(fd);
-        break;
-    }
-    }
-    pthread_mutex_unlock(&g_clients_mtx);
-    }
+static volatile sig_atomic_t g_running = 1;
 
-    static void broadcast(const char *line){
-    pthread_mutex_lock(&g_clients_mtx);
-    for (int i=0;i<MAX_CLIENTS;i++){
-    if (g_clients[i].alive) {
-        ssize_t _ = send(g_clients[i].fd, line, strlen(line), 0);
-        (void)_;
-    }
-    }
-    pthread_mutex_unlock(&g_clients_mtx);
-    }
+// --- Utilidades ---
+static void log_ts(FILE* f) {
+    time_t now=time(NULL); struct tm tm; localtime_r(&now,&tm);
+    char buf[32]; strftime(buf,sizeof(buf),"%Y-%m-%d %H:%M:%S",&tm);
+    fprintf(f,"[%s] ",buf);
+}
 
-    // ====== Telemetría periódica ======
-    static void *telemetry_thr(void *arg){
-    (void)arg;
-    char line[256];
-    for(;;){
-    sleep(TELEMETRY_INTERVAL);
-    pthread_mutex_lock(&g_vehicle_mtx);
-        // Simulación simple de dinámica:
-        // - La batería baja 5% cada intervalo hasta mínimo 0.
-        if (g_vehicle.battery > 0) g_vehicle.battery -= 5;
-        // - Temperatura fluctúa ligeramente.
-        if (g_vehicle.temp < 40 && (rand()%3==0)) g_vehicle.temp += 1;
-        else if (g_vehicle.temp > 20 && (rand()%5==0)) g_vehicle.temp -= 1;
-        // - Si dirección es LEFT/RIGHT vuelve a STRAIGHT después de 2 intervalos aprox.
-        static int dir_count=0; dir_count++;
-        if ((g_vehicle.dir[0]=='L' || g_vehicle.dir[0]=='R') && dir_count>=2){
-            strncpy(g_vehicle.dir, "STRAIGHT", sizeof g_vehicle.dir); dir_count=0;
-        }
-        // - Pequeña inercia: si velocidad >0 y no se ha pedido cambio, reduce 1 cada 3 intervalos.
-        static int speed_tick=0; speed_tick++;
-        if (g_vehicle.speed>0 && speed_tick>=3){ g_vehicle.speed -= 1; speed_tick=0; }
-    snprintf(line,sizeof line,
-        "{\"t\":\"TELEMETRY\",\"speed\":%d,\"battery\":%d,\"temp\":%d,\"dir\":\"%s\",\"ts\":%ld}\n",
-        g_vehicle.speed, g_vehicle.battery, g_vehicle.temp, g_vehicle.dir, time(NULL));
-    pthread_mutex_unlock(&g_vehicle_mtx);
-    broadcast(line);
-    jlog("TX_DATA","*", "%s", line);
-    }
-    return NULL;
-    }
+static void log_msg(const char* fmt, ...) {
+    va_list ap;
 
-    // ====== Thread-pool sencillo ======
-    #define NWORKERS 6
-    typedef struct job { int fd; struct job *next; } job_t;
-    static job_t *q_head=NULL, *q_tail=NULL;
-    static pthread_mutex_t q_mtx=PTHREAD_MUTEX_INITIALIZER;
-    static pthread_cond_t  q_cv =PTHREAD_COND_INITIALIZER;
-
-    static void enqueue(int fd){
-    job_t *j=malloc(sizeof *j); j->fd=fd; j->next=NULL;
-    pthread_mutex_lock(&q_mtx);
-    if(q_tail) q_tail->next=j; else q_head=j;
-    q_tail=j;
-    pthread_cond_signal(&q_cv);
-    pthread_mutex_unlock(&q_mtx);
+    pthread_mutex_lock(&g_log_mtx);
+    // consola
+    log_ts(stdout);
+    va_start(ap, fmt); vfprintf(stdout, fmt, ap); va_end(ap);
+    fputc('\n', stdout); fflush(stdout);
+    // archivo
+    if (g_logf) {
+        log_ts(g_logf);
+        va_start(ap, fmt); vfprintf(g_logf, fmt, ap); va_end(ap);
+        fputc('\n', g_logf); fflush(g_logf);
     }
-    static int dequeue(void){
-    pthread_mutex_lock(&q_mtx);
-    while(!q_head) pthread_cond_wait(&q_cv,&q_mtx);
-    job_t *j=q_head; q_head=j->next; if(!q_head) q_tail=NULL;
-    pthread_mutex_unlock(&q_mtx);
-    int fd=j->fd; free(j); return fd;
-    }
+    pthread_mutex_unlock(&g_log_mtx);
+}
 
-    // ====== Parser/handler de mensajes ======
-    static void sendln(int fd, const char *json){
-    send(fd, json, strlen(json), 0);
-    }
-
-    static void handle_line(int fd, client_t *cli, char *line){
-    // recorta \r\n
-    size_t n=strlen(line); while(n && (line[n-1]=='\n'||line[n-1]=='\r')) line[--n]=0;
-    jlog("RX", cli->who, "%s", line);
-    cli->last=time(NULL);
-
-    // HELLO
-    if (strstr(line, "\"t\":\"HELLO\"")){
-    bool admin = strstr(line, "\"role\":\"ADMIN\"");
-    if (admin){
-        const char *tok = strstr(line,"\"token\":\"");
-        if (!tok || strncmp(tok+9, ADMIN_TOKEN, strlen(ADMIN_TOKEN))!=0){
-        sendln(fd, "{\"t\":\"ERR\",\"code\":\"bad-auth\"}\n");
-        return;
-        }
-        cli->is_admin=true;
-    }
-    char resp[128];
-    snprintf(resp,sizeof resp,"{\"t\":\"HELLO_OK\",\"role\":\"%s\"}\n", cli->is_admin?"ADMIN":"OBSERVER");
-    sendln(fd, resp);
-    return;
-    }
-
-    // GET_DATA
-    if (strstr(line, "\"t\":\"GET_DATA\"")){
-    char resp[256];
-    pthread_mutex_lock(&g_vehicle_mtx);
-    snprintf(resp,sizeof resp,
-        "{\"t\":\"DATA\",\"speed\":%d,\"battery\":%d,\"temp\":%d,\"dir\":\"%s\",\"ts\":%ld}\n",
-        g_vehicle.speed,g_vehicle.battery,g_vehicle.temp,g_vehicle.dir,time(NULL));
-    pthread_mutex_unlock(&g_vehicle_mtx);
-    sendln(fd,resp);
-    return;
-    }
-
-    // LIST_USERS (solo admin)
-    if (strstr(line, "\"t\":\"LIST_USERS\"")){
-    if (!cli->is_admin){ sendln(fd,"{\"t\":\"ERR\",\"code\":\"not-authorized\"}\n"); return; }
-    char resp[1024]; strcpy(resp,"{\"t\":\"USERS\",\"items\":[");
-    bool first=true;
-    pthread_mutex_lock(&g_clients_mtx);
-    for(int i=0;i<MAX_CLIENTS;i++) if(g_clients[i].alive){
-        char item[128];
-        snprintf(item,sizeof item,"%s{\"ip\":\"%.*s\",\"port\":0,\"role\":\"%s\"}",
-                first?"":",", (int)strcspn(g_clients[i].who,":"), g_clients[i].who,
-                g_clients[i].is_admin?"ADMIN":"OBSERVER");
-        strcat(resp,item); first=false;
-    }
-    pthread_mutex_unlock(&g_clients_mtx);
-    strcat(resp,"]}\n");
-    sendln(fd,resp);
-    return;
-    }
-
-    // CMD (solo admin)
-    if (strstr(line,"\"t\":\"CMD\"")){
-    if (!cli->is_admin){ sendln(fd,"{\"t\":\"ERR\",\"code\":\"not-authorized\"}\n"); return; }
-    // extrae name
-    const char *nm=strstr(line,"\"name\":\"");
-    if(!nm){ sendln(fd,"{\"t\":\"ERR\",\"code\":\"bad-cmd\"}\n"); return; }
-    char name[32]={0}; sscanf(nm+8,"%31[^\"]", name);
-
-    // lógica simple con posibilidad de NACK
-    char out[128];
-    pthread_mutex_lock(&g_vehicle_mtx);
-    if(!strcmp(name,"SPEED_UP")){
-        if (g_vehicle.battery<15 || g_vehicle.speed>=100){
-        snprintf(out,sizeof out,"{\"t\":\"NACK\",\"name\":\"%s\",\"reason\":\"%s\"}\n",name,
-                    g_vehicle.battery<15?"battery-low":"speed-limit");
-        } else { g_vehicle.speed+=10; snprintf(out,sizeof out,"{\"t\":\"ACK\",\"name\":\"%s\"}\n",name); }
-    } else if(!strcmp(name,"SLOW_DOWN")) {
-        g_vehicle.speed = (g_vehicle.speed>=10? g_vehicle.speed-10:0);
-        snprintf(out,sizeof out,"{\"t\":\"ACK\",\"name\":\"%s\"}\n",name);
-    } else if(!strcmp(name,"TURN_LEFT") || !strcmp(name,"TURN_RIGHT")){
-        strncpy(g_vehicle.dir, !strcmp(name,"TURN_LEFT")?"LEFT":"RIGHT", sizeof g_vehicle.dir);
-        snprintf(out,sizeof out,"{\"t\":\"ACK\",\"name\":\"%s\"}\n",name);
+static void addr_to_text(struct sockaddr* sa, char* out, size_t outlen) {
+    char host[NI_MAXHOST], serv[NI_MAXSERV];
+    int rc = getnameinfo(sa, (sa->sa_family==AF_INET? sizeof(struct sockaddr_in): sizeof(struct sockaddr_in6)),
+                         host, sizeof(host), serv, sizeof(serv),
+                         NI_NUMERICHOST | NI_NUMERICSERV);
+    if (rc==0) {
+        snprintf(out, outlen, "%s:%s", host, serv);
     } else {
-        snprintf(out,sizeof out,"{\"t\":\"ERR\",\"code\":\"bad-cmd\"}\n");
+        snprintf(out, outlen, "unknown");
     }
-    pthread_mutex_unlock(&g_vehicle_mtx);
-    sendln(fd,out);
-    return;
+}
+
+// Enviar todo manejando envíos parciales e interrupciones
+static ssize_t send_all(int fd, const char* buf, size_t len) {
+    size_t off = 0;
+    while (off < len) {
+        ssize_t n = send(fd, buf + off, len - off, 0);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        off += (size_t)n;
     }
+    return (ssize_t)off;
+}
 
-    if (strstr(line,"\"t\":\"PING\"")){ sendln(fd,"{\"t\":\"PONG\"}\n"); return; }
-    if (strstr(line,"\"t\":\"BYE\"")) { remove_client_fd(fd); return; }
+static ssize_t send_line(int fd, const char* line) {
+    size_t n = strlen(line);
+    ssize_t s1 = send(fd, line, n, 0);
+    if (s1<0) return s1;
+    ssize_t s2 = send(fd, "\n", 1, 0);
+    if (s2<0) return s2;
+    return s1 + s2;
+}
 
-    sendln(fd,"{\"t\":\"ERR\",\"code\":\"bad-request\"}\n");
+static int recv_line(int fd, char* buf, size_t cap) {
+    size_t i=0;
+    while (i < cap-1) {
+        char c;
+        ssize_t r = recv(fd, &c, 1, 0);
+        if (r==0) return 0;        // FIN
+        if (r<0) {
+            if (errno==EINTR) continue;
+            return -1;             // error
+        }
+        if (c=='\r') continue;
+        if (c=='\n') { buf[i]='\0'; return (int)i; }
+        buf[i++] = c;
     }
+    buf[i]='\0';
+    return (int)i;
+}
 
-    static void *worker(void *arg){
-    (void)arg;
-    char buf[BUF_SIZE];
-    for(;;){
-    int fd = dequeue();
-    // quién es:
-    client_t me = {0};
+// --- Gestión de clientes ---
+static void add_client(client_t* c) {
     pthread_mutex_lock(&g_clients_mtx);
-    for (int i=0;i<MAX_CLIENTS;i++) if(g_clients[i].alive && g_clients[i].fd==fd) { me=g_clients[i]; break; }
+    c->next = g_clients;
+    g_clients = c;
+    pthread_mutex_unlock(&g_clients_mtx);
+}
+
+static void remove_client(int fd) {
+    pthread_mutex_lock(&g_clients_mtx);
+    client_t **pp=&g_clients, *cur=g_clients;
+    while (cur) {
+        if (cur->fd == fd) {
+            *pp = cur->next;
+            close(cur->fd);
+            free(cur);
+            break;
+        }
+        pp = &cur->next;
+        cur = cur->next;
+    }
+    pthread_mutex_unlock(&g_clients_mtx);
+}
+
+static int client_count(void) {
+    int n=0;
+    pthread_mutex_lock(&g_clients_mtx);
+    for (client_t* c=g_clients; c; c=c->next) n++;
+    pthread_mutex_unlock(&g_clients_mtx);
+    return n;
+}
+
+// Enviar telemetría a todos (sin bloquear el lock durante send())
+static void broadcast_telemetry(void) {
+    vehicle_state_t s;
+    pthread_mutex_lock(&g_state_mtx); s = g_state; pthread_mutex_unlock(&g_state_mtx);
+
+    char line[256];
+    time_t now = time(NULL);
+    const char* d = (s.dir==DIR_LEFT? "LEFT": s.dir==DIR_RIGHT? "RIGHT":"STRAIGHT");
+    snprintf(line, sizeof(line),
+        "TELEMETRY speed=%d battery=%d temp=%d dir=%s ts=%ld",
+        s.speed, s.battery, s.temp, d, (long)now);
+
+    // Snapshot de fds/subscribed/alive
+    int n=0;
+    pthread_mutex_lock(&g_clients_mtx);
+    for (client_t* c=g_clients; c; c=c->next) n++;
+    int *fds = (int*)malloc(sizeof(int)*n);
+    bool *wants = (bool*)malloc(sizeof(bool)*n);
+    int i=0;
+    for (client_t* c=g_clients; c && i<n; c=c->next, ++i) {
+        fds[i] = c->fd;
+        wants[i] = (c->alive && c->subscribed);
+    }
     pthread_mutex_unlock(&g_clients_mtx);
 
-    // loop de lectura por líneas
-    FILE *fp = fdopen(dup(fd),"r");
-    if(!fp){ remove_client_fd(fd); continue; }
-    while (fgets(buf,sizeof buf, fp)){
-        handle_line(fd, &me, buf);
+    // Enviar fuera del lock y recolectar fallidos
+    int *to_close = (int*)malloc(sizeof(int)*n);
+    int nc=0;
+    for (int k=0; k<n; ++k) {
+        if (!wants[k]) continue;
+        if (send_line(fds[k], line) < 0) {
+            to_close[nc++] = fds[k];
+        }
     }
-    fclose(fp);
-    remove_client_fd(fd);
-    jlog("DISCONNECT", me.who, "closed");
+    // Cerrar fallidos
+    for (int k=0; k<nc; ++k) remove_client(to_close[k]);
+
+    free(fds); free(wants); free(to_close);
+}
+
+// --- Lógica de comandos ---
+static bool maybe_reject_for_policy(const char* cmd, char* reason, size_t rcap) {
+    // Ejemplo: si batería < 10%, no acelerar; si velocidad 0, no “slow down”
+    vehicle_state_t s;
+    pthread_mutex_lock(&g_state_mtx); s=g_state; pthread_mutex_unlock(&g_state_mtx);
+
+    if (!strcmp(cmd,"SPEED UP") && s.battery < 10) {
+        snprintf(reason, rcap, "low_battery");
+        return true;
+    }
+    if (!strcmp(cmd,"SLOW DOWN") && s.speed==0) {
+        snprintf(reason, rcap, "already_stopped");
+        return true;
+    }
+    return false;
+}
+
+static void apply_command(const char* cmd) {
+    pthread_mutex_lock(&g_state_mtx);
+    if (!strcmp(cmd,"SPEED UP")) {
+        g_state.speed += 5;
+        if (g_state.speed > 120) g_state.speed = 120;
+        if (g_state.battery>0) g_state.battery -= 1;
+    } else if (!strcmp(cmd,"SLOW DOWN")) {
+        g_state.speed -= 5;
+        if (g_state.speed < 0) g_state.speed = 0;
+    } else if (!strcmp(cmd,"TURN LEFT")) {
+        g_state.dir = DIR_LEFT;
+    } else if (!strcmp(cmd,"TURN RIGHT")) {
+        g_state.dir = DIR_RIGHT;
+    }
+    pthread_mutex_unlock(&g_state_mtx);
+}
+
+// --- Hilos ---
+static void* telemetry_thread_fn(void* _arg) {
+    (void)_arg;
+    while (g_running) {
+        for (int i=0;i<TELEMETRY_PERIOD_SEC && g_running;i++) sleep(1);
+        if (!g_running) break;
+        broadcast_telemetry();
     }
     return NULL;
+}
+
+static void list_users_to_client(int fd) {
+    pthread_mutex_lock(&g_clients_mtx);
+    int n=0; for (client_t* c=g_clients;c;c=c->next) n++;
+    char hdr[64]; snprintf(hdr,sizeof(hdr),"USERS %d",n);
+    send_line(fd,hdr);
+    for (client_t* c=g_clients;c;c=c->next) {
+        char at[128]; addr_to_text((struct sockaddr*)&c->addr, at, sizeof(at));
+        char line[256];
+        snprintf(line,sizeof(line),"USER %s %s %ld", at, (c->role==ROLE_ADMIN?"ADMIN":"OBSERVER"), (long)c->connected_at);
+        send_line(fd,line);
+    }
+    pthread_mutex_unlock(&g_clients_mtx);
+}
+
+static void* client_thread_fn(void* arg) {
+    client_t* self = (client_t*)arg;
+    char who[128]; addr_to_text((struct sockaddr*)&self->addr, who, sizeof(who));
+    log_msg("CLIENT CONNECT %s", who);
+
+    send_line(self->fd, "OK Welcome to TLP/1.0");
+    self->subscribed = true; 
+
+    char buf[MAX_LINE];
+    while (g_running) {
+        int n = recv_line(self->fd, buf, sizeof(buf));
+        if (n==0) { log_msg("CLIENT FIN %s", who); break; }
+        if (n<0)  { log_msg("CLIENT ERROR RECV %s: %s", who, strerror(errno)); break; }
+        // Normaliza espacios
+        while (n>0 && (buf[n-1]==' ')) { buf[--n]='\0'; }
+        log_msg("REQ %s -> %s", who, buf);
+
+        if (!strncmp(buf,"HELLO",5)) {
+            send_line(self->fd, "OK HELLO");
+        } else if (!strncmp(buf,"SUBSCRIBE",9)) {
+            self->subscribed = true;
+            send_line(self->fd, "OK SUBSCRIBED");
+        } else if (!strncmp(buf,"AUTH ADMIN ",11)) {
+            const char* tok = buf+11;
+            if (!strcmp(tok, ADMIN_TOKEN)) {
+                self->role = ROLE_ADMIN;
+                send_line(self->fd, "OK AUTH ADMIN");
+            } else {
+                send_line(self->fd, "ERROR AUTH bad_token");
+            }
+        } else if (!strncmp(buf,"LIST USERS",10)) {
+            list_users_to_client(self->fd);
+        } else if (!strncmp(buf,"COMMAND ",8)) {
+            if (self->role != ROLE_ADMIN) {
+                send_line(self->fd, "ERROR PERM admin_required");
+                continue;
+            }
+            const char* cmd = buf+8;
+            if (strcmp(cmd,"SPEED UP") && strcmp(cmd,"SLOW DOWN") && strcmp(cmd,"TURN LEFT") && strcmp(cmd,"TURN RIGHT")) {
+                send_line(self->fd, "ERROR CMD unknown_command");
+                continue;
+            }
+            char reason[64];
+            if (maybe_reject_for_policy(cmd, reason, sizeof(reason))) {
+                char line[128]; snprintf(line,sizeof(line),"ERROR REJECTED %s", reason);
+                send_line(self->fd, line);
+                continue;
+            }
+            apply_command(cmd);
+            send_line(self->fd, "OK EXECUTED");
+        } else {
+            send_line(self->fd, "ERROR BAD_REQUEST syntax");
+        }
     }
 
-    // ====== main ======
-    int main(int argc, char **argv){
-    if(argc!=3){ fprintf(stderr,"Uso: %s <port> <LogsFile>\n", argv[0]); return 1; }
-    int port=atoi(argv[1]); g_logf=fopen(argv[2],"a"); if(!g_logf) g_logf=stderr;
+    // Cierre
+    self->alive=false;
+    remove_client(self->fd);
+    log_msg("CLIENT CLOSED %s", who);
+    return NULL;
+}
 
-    signal(SIGPIPE, SIG_IGN);
+// --- Señales ---
+static void on_sigint(int sig) {
+    (void)sig;
+    g_running = 0;
+    if (g_listen_fd>=0) close(g_listen_fd);
+}
 
-    // hilo de telemetría
-    pthread_t ttele; pthread_create(&ttele,NULL,telemetry_thr,NULL); pthread_detach(ttele);
-
-    // inicia pool
-    pthread_t th[NWORKERS]; for (int i=0;i<NWORKERS;i++){ pthread_create(&th[i],NULL,worker,NULL); pthread_detach(th[i]); }
-
-    int s=socket(AF_INET,SOCK_STREAM,0);
-    int yes=1; setsockopt(s,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof yes);
-    struct sockaddr_in a={0}; a.sin_family=AF_INET; a.sin_addr.s_addr=INADDR_ANY; a.sin_port=htons(port);
-    if(bind(s,(struct sockaddr*)&a,sizeof a)==-1){ perror("bind"); return 1; }
-    if(listen(s,64)==-1){ perror("listen"); return 1; }
-    fprintf(stderr,"VTAP/1.0 server on %d\n", port);
-
-    for(;;){
-    struct sockaddr_in ca; socklen_t cl=sizeof ca;
-    int c=accept(s,(struct sockaddr*)&ca,&cl);
-    if(c==-1){ if(errno==EINTR) continue; perror("accept"); continue; }
-    char who[64]; snprintf(who,sizeof who,"%s:%d", inet_ntoa(ca.sin_addr), ntohs(ca.sin_port));
-    add_client(c, who); jlog("CONNECT", who, "ok");
-    enqueue(c);
+// --- Main ---
+int main(int argc, char** argv) {
+    if (argc != 3) {
+        fprintf(stderr, "Uso: %s <port> <LogsFile>\n", argv[0]);
+        return 1;
     }
+    const char* port = argv[1];
+    const char* logpath = argv[2];
+
+    g_logf = fopen(logpath, "a");
+    if (!g_logf) { perror("fopen log"); return 1; }
+
+    signal(SIGINT, on_sigint);
+    signal(SIGTERM, on_sigint);
+
+    // --- Socket de escucha: SOCK_STREAM (TCP) ---
+    struct addrinfo hints, *res, *rp;
+    memset(&hints,0,sizeof(hints));
+    hints.ai_family   = AF_UNSPEC;       // 
+    hints.ai_socktype = SOCK_STREAM;     // estamos usando SOCK_STREAM
+    hints.ai_flags    = AI_PASSIVE;
+
+    int rc = getaddrinfo(NULL, port, &hints, &res);
+    if (rc != 0) {
+        fprintf(stderr,"getaddrinfo: %s\n", gai_strerror(rc));
+        return 1;
+    }
+
+    int listen_fd = -1;
+    for (rp=res; rp; rp=rp->ai_next) {
+        listen_fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (listen_fd<0) continue;
+
+        int yes=1; setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+        int ka=1;  setsockopt(listen_fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka));
+
+        if (bind(listen_fd, rp->ai_addr, rp->ai_addrlen)==0) {
+            if (listen(listen_fd, BACKLOG)==0) break;
+        }
+        close(listen_fd); listen_fd=-1;
+    }
+    freeaddrinfo(res);
+
+    if (listen_fd<0) { perror("listen/bind"); return 1; }
+    g_listen_fd = listen_fd;
+
+    log_msg("SERVER START port=%s (socket type: SOCK_STREAM/TCP)", port);
+
+    // Lanzar hilo de telemetría
+    pthread_t th_tel; pthread_create(&th_tel, NULL, telemetry_thread_fn, NULL);
+
+    // Loop de aceptación
+    while (g_running) {
+        struct sockaddr_storage cliaddr; socklen_t clilen=sizeof(cliaddr);
+        int cfd = accept(listen_fd, (struct sockaddr*)&cliaddr, &clilen);
+        if (cfd<0) {
+            if (errno==EINTR && !g_running) break;
+            if (errno==EINTR) continue;
+            perror("accept"); continue;
+        }
+
+        // Límite de clientes concurrentes
+        if (client_count() >= MAX_CLIENTS) {
+            const char* busy = "ERROR server_busy max_clients_reached\n";
+            send_all(cfd, busy, strlen(busy));
+            shutdown(cfd, SHUT_RDWR);
+            close(cfd);
+            continue;
+        }
+
+        // TCP_NODELAY 
+        int nd=1; setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &nd, sizeof(nd));
+
+        // Keepalive por conexión 
+        int ka=1; setsockopt(cfd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka));
+        // Tuning de keepalive (Linux)
+        #ifdef TCP_KEEPIDLE
+        int idle=60;  setsockopt(cfd, IPPROTO_TCP, TCP_KEEPIDLE,  &idle, sizeof(idle));
+        #endif
+        #ifdef TCP_KEEPINTVL
+        int intvl=10; setsockopt(cfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+        #endif
+        #ifdef TCP_KEEPCNT
+        int cnt=3;    setsockopt(cfd, IPPROTO_TCP, TCP_KEEPCNT,   &cnt, sizeof(cnt));
+        #endif
+
+        client_t* c = calloc(1,sizeof(*c));
+        c->fd = cfd; c->addr = cliaddr; c->addrlen=clilen; c->role=ROLE_OBSERVER; c->connected_at=time(NULL); c->subscribed=true; c->alive=true;
+
+        add_client(c);
+
+        pthread_t th;
+        pthread_create(&th, NULL, client_thread_fn, c);
+        pthread_detach(th);
+    }
+
+    // Cierre ordenado
+    g_running = 0;
+    close(listen_fd);
+
+    // Cerrar todos los clientes
+    pthread_mutex_lock(&g_clients_mtx);
+    for (client_t* c=g_clients;c;c=c->next) { shutdown(c->fd, SHUT_RDWR); close(c->fd); }
+    pthread_mutex_unlock(&g_clients_mtx);
+
+    pthread_join(th_tel, NULL);
+
+    if (g_logf) fclose(g_logf);
+    log_msg("SERVER STOP");
+    return 0;
 }

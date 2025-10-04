@@ -1,36 +1,38 @@
+cat > protocol.h <<'EOF'
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
-
-// Parámetros del servidor
+#define PROTO_NAME "TLP"
+#define PROTO_VERSION "1.0"
+#define PROTO_BANNER "HELLO TLP/1.0"
 #define MAX_CLIENTS 128
-#define BUF_SIZE 2048
-#define TELEMETRY_INTERVAL 10
-
-// Autenticación
-#define ADMIN_TOKEN "SECRETO_2025" 
-
-// Tipos de mensajes
-#define MSG_HELLO "HELLO"
-#define MSG_WELCOME "WELCOME"
-#define MSG_CMD "CMD"
-#define MSG_CMD_RESP "CMD_RESP"
-#define MSG_TELEMETRY "TELEMETRY"
+#define MAX_LINE 1024
+#define TELEMETRY_PERIOD_SEC 10
+#define ADMIN_TOKEN "SECRETO_2025"
+#define ROLE_ADMIN_STR "ADMIN"
+#define ROLE_OBSERVER_STR "OBSERVER"
+#define MSG_HELLO "HELLO TLP/1.0"
+#define MSG_SUBSCRIBE "SUBSCRIBE"
+#define MSG_AUTH_ADMIN_PREF "AUTH ADMIN "
+#define MSG_COMMAND_PREF "COMMAND "
+#define MSG_LIST_USERS "LIST USERS"
+#define MSG_OK "OK"
 #define MSG_ERROR "ERROR"
-#define MSG_GET_DATA "GET_DATA"
-#define MSG_LIST_USERS "LIST_USERS"
-
-// Comandos disponibles
-#define CMD_SPEED_UP "SPEED_UP"
-#define CMD_SLOW_DOWN "SLOW_DOWN"
-#define CMD_TURN_LEFT "TURN_LEFT"
-#define CMD_TURN_RIGHT "TURN_RIGHT"
-
-// Roles
-#define ROLE_ADMIN "ADMIN"
-#define ROLE_OBSERVER "OBSERVER"
-
-// Límites del vehículo
-#define MAX_SPEED 300  // km/h
-#define MIN_BATTERY 15 // % mínimo para ejecutar comandos
-
-#endif // PROTOCOL_H
+#define MSG_USERS_PREF "USERS "
+#define MSG_USER_PREF "USER "
+#define MSG_TELEMETRY "TELEMETRY"
+#define CMD_SPEED_UP "SPEED UP"
+#define CMD_SLOW_DOWN "SLOW DOWN"
+#define CMD_TURN_LEFT "TURN LEFT"
+#define CMD_TURN_RIGHT "TURN RIGHT"
+#define TL_KEY_SPEED "speed"
+#define TL_KEY_BATTERY "battery"
+#define TL_KEY_TEMP "temp"
+#define TL_KEY_DIR "dir"
+#define TL_KEY_TS "ts"
+#define DIR_LEFT_STR "LEFT"
+#define DIR_RIGHT_STR "RIGHT"
+#define DIR_STRAIGHT_STR "STRAIGHT"
+#define MAX_SPEED_KMH 150
+#define MIN_BATTERY_CMD_PCT 15
+#endif
+EOF

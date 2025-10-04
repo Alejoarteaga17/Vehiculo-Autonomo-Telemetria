@@ -1,5 +1,3 @@
-
-
 import sys
 from cliente import VehiculoClient
 

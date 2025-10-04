@@ -1,24 +1,18 @@
-
-
 import socket
 import threading
-import json
 import tkinter as tk
 from tkinter import messagebox
 import time
 import os
 import csv
 
-
 class VehiculoClient:
-    def __init__(self, host="127.0.0.1", port=8080, admin=False, token=None, auto_poll=True, poll_interval=10,
-                log_dir="logs", log_format="csv"):
+    def __init__(self, host="127.0.0.1", port=8080, admin=False, token=None,
+                 log_dir="logs", log_format="csv"):
         self.host = host
         self.port = port
         self.admin = admin
         self.token = token or ("SECRETO_2025" if admin else None)
-        self.auto_poll = auto_poll  # si True, pedirá GET_DATA periódicamente además de TELEMETRY
-        self.poll_interval = poll_interval
         self.log_dir = log_dir
         self.log_format = log_format.lower()  # 'csv' o 'json'
         self._log_file = None
@@ -27,7 +21,6 @@ class VehiculoClient:
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._recv_thread = None
-        self._poll_thread = None
         self._stop = threading.Event()
 
         # GUI
@@ -48,19 +41,23 @@ class VehiculoClient:
 
         # Frame de comandos (solo admin)
         self.cmd_buttons = []
+        frame = tk.Frame(self.root, bd=1, relief=tk.GROOVE, padx=5, pady=5)
+        frame.pack(pady=8)
         if self.admin:
-            frame = tk.Frame(self.root, bd=1, relief=tk.GROOVE, padx=5, pady=5)
-            frame.pack(pady=8)
             buttons = [
-                ("Speed +", "SPEED_UP"),
-                ("Speed -", "SLOW_DOWN"),
-                ("Turn Left", "TURN_LEFT"),
-                ("Turn Right", "TURN_RIGHT"),
+                ("Speed +", "SPEED UP"),
+                ("Speed -", "SLOW DOWN"),
+                ("Turn Left", "TURN LEFT"),
+                ("Turn Right", "TURN RIGHT"),
             ]
             for i, (label, cmd) in enumerate(buttons):
                 b = tk.Button(frame, text=label, width=12, command=lambda c=cmd: self.send_cmd(c))
                 b.grid(row=i // 2, column=i % 2, padx=4, pady=4)
                 self.cmd_buttons.append(b)
+
+        # Botón LIST USERS (útil para ambos roles)
+        btn_list = tk.Button(self.root, text="List Users", command=self.list_users)
+        btn_list.pack(pady=4)
 
         # Cerrar limpio
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -70,31 +67,20 @@ class VehiculoClient:
         try:
             self.sock.connect((self.host, self.port))
             self.status_label.config(text="Estado: Conectado (enviando HELLO)")
-            hello = {"t": "HELLO", "role": "ADMIN", "token": self.token} if self.admin else {"t": "HELLO", "role": "OBSERVER"}
-            self._send_json(hello)
+            self._send_line("HELLO TLP/1.0")
+            self._send_line("SUBSCRIBE")
+            if self.admin:
+                self._send_line(f"AUTH ADMIN {self.token}")
+
             # Thread recepción
             self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
             self._recv_thread.start()
-            # GET_DATA inicial para tener datos instantáneos
-            self.request_data()
-            # Thread polling periódico opcional
-            if self.auto_poll:
-                self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
-                self._poll_thread.start()
+
             self.root.mainloop()
         except Exception as e:
             messagebox.showerror("Error de conexión", str(e))
 
-    def _poll_loop(self):
-        while not self._stop.is_set():
-            time.sleep(self.poll_interval)
-            if self._stop.is_set():
-                break
-            try:
-                self.request_data()
-            except Exception:
-                pass
-
+    # ================= Recepción =================
     def _recv_loop(self):
         buffer = ""
         try:
@@ -113,74 +99,105 @@ class VehiculoClient:
         finally:
             self.status_label.config(text="Estado: Desconectado")
 
-    # ================= Envío / Peticiones =================
-    def _send_json(self, obj):
-        data = json.dumps(obj, separators=(',', ':')) + "\n"
-        self.sock.sendall(data.encode())
+    def _handle_line(self, line: str):
+        # Ejemplos válidos:
+        #   OK Welcome to TLP/1.0
+        #   OK AUTH ADMIN
+        #   ERROR AUTH bad_token
+        #   TELEMETRY speed=12 battery=92 temp=25 dir=LEFT ts=1759525432
+        #   USERS 3 \n USER 127.0.0.1:53231 OBSERVER 1759... \n ...
+        if line.startswith("TELEMETRY"):
+            data = self._parse_telemetry_line(line)
+            if data:
+                self._update_telemetry(data, origin="TELEMETRY")
+            return
 
-    def send_cmd(self, name):
+        if line.startswith("USERS "):
+            # Mostramos en status el número
+            try:
+                n = int(line.split()[1])
+                self._set_status(f"Usuarios conectados: {n}")
+            except Exception:
+                self._set_status(line)
+            return
+        if line.startswith("USER "):
+            # Puedes imprimirlos en consola o mostrarlos en un popup
+            print(line)
+            return
+
+        if line.startswith("OK"):
+            self._set_status(line)
+            return
+
+        if line.startswith("ERROR"):
+            self._set_status(line)
+            return
+
+        # Desconocido/otros
+        print("[INFO]", line)
+
+    # ================= Envío / Peticiones =================
+    def _send_line(self, s: str):
+        try:
+            # aseguramos \n
+            if not s.endswith("\n"):
+                s += "\n"
+            self.sock.sendall(s.encode())
+        except Exception as e:
+            messagebox.showerror("Error de envío", str(e))
+
+    def send_cmd(self, cmd_text):
         if not self.admin:
             messagebox.showwarning("No autorizado", "Rol OBSERVER no puede enviar comandos")
             return
-        try:
-            self._send_json({"t": "CMD", "name": name})
-            # Forzar refresh después del comando
-            self.request_data()
-        except Exception as e:
-            messagebox.showerror("Error enviando comando", str(e))
-
-    def request_data(self):
-        self._send_json({"t": "GET_DATA"})
-
-    # ================= Procesamiento mensajes =================
-    def _handle_line(self, line: str):
-        try:
-            msg = json.loads(line)
-        except json.JSONDecodeError:
-            print("[WARN] JSON inválido:", line)
+        if cmd_text not in ("SPEED UP", "SLOW DOWN", "TURN LEFT", "TURN RIGHT"):
+            messagebox.showwarning("Comando inválido", cmd_text)
             return
+        self._send_line(f"COMMAND {cmd_text}")
 
-        t = msg.get("t")
-        if t in ("DATA", "TELEMETRY"):
-            self._update_telemetry(msg, t)
-        elif t == "HELLO_OK":
-            role = msg.get("role", "?")
-            self.status_label.config(text=f"Estado: Autenticado como {role}")
-        elif t in ("ACK", "NACK"):
-            # Mostrar breve feedback en etiqueta status
-            if t == "ACK":
-                self.status_label.config(text=f"ACK {msg.get('name','')} OK")
-                print(f"[CMD] {msg.get('name')} → {t}")
-            else:
-                reason = msg.get("reason", "?")
-                self.status_label.config(text=f"NACK {msg.get('name','')} ({reason})")
-        elif t == "ERR":
-            self.status_label.config(text=f"ERROR: {msg.get('code','?')}")
-        else:
-            # Otros (USERS, PONG, etc.)
-            print("[INFO]", msg)
+    def list_users(self):
+        self._send_line("LIST USERS")
+
+    # ================= Procesamiento TELEMETRY =================
+    def _parse_telemetry_line(self, line: str):
+        # Formato:
+        # TELEMETRY speed=12 battery=92 temp=25 dir=LEFT ts=1759525432
+        try:
+            parts = line.split()
+            if parts[0] != "TELEMETRY":
+                return None
+            kv = {}
+            for p in parts[1:]:
+                if "=" in p:
+                    k, v = p.split("=", 1)
+                    kv[k] = v
+            data = {
+                "speed": int(kv.get("speed", "0")),
+                "battery": int(kv.get("battery", "0")),
+                "temp": int(kv.get("temp", "0")),
+                "dir": kv.get("dir", "--"),
+                "ts": int(kv.get("ts", str(int(time.time())))),
+            }
+            return data
+        except Exception as e:
+            print("[PARSE] Línea inválida:", line, "err:", e)
+            return None
 
     def _update_telemetry(self, msg, origin):
-        speed = msg.get('speed', '--')
-        battery = msg.get('battery', '--')
-        temp = msg.get('temp', '--')
-        direction = msg.get('dir', '--')
-
-        # ==== Mostrar en terminal ====
-        print(f"[{time.strftime('%H:%M:%S')}] [{origin}] "
-            f"Vel: {speed} | Bat: {battery}% | Temp: {temp}° | Dir: {direction}")
-
-        # ==== Actualizar GUI ====
-        self.speed_label.config(text=f"Velocidad: {speed}")
-        self.battery_label.config(text=f"Batería: {battery}")
-        self.temp_label.config(text=f"Temperatura: {temp}")
-        self.dir_label.config(text=f"Dirección: {direction}")
+        # (tkinter no es 100% thread-safe; usamos after para actualizar desde el hilo RX)
         ts = msg.get('ts', int(time.time()))
         human = time.strftime('%H:%M:%S', time.localtime(ts))
-        self.last_update_label.config(text=f"Última actualización: {human} ({origin})")
-
-        # ==== Registrar en log ====
+        def apply():
+            self.speed_label.config(text=f"Velocidad: {msg.get('speed','--')}")
+            self.battery_label.config(text=f"Batería: {msg.get('battery','--')}")
+            self.temp_label.config(text=f"Temperatura: {msg.get('temp','--')}")
+            self.dir_label.config(text=f"Dirección: {msg.get('dir','--')}")
+            self.last_update_label.config(text=f"Última actualización: {human} ({origin})")
+        self.root.after(0, apply)
         self._log_telemetry(msg, origin)
+
+    def _set_status(self, text):
+        self.root.after(0, lambda: self.status_label.config(text=f"Estado: {text}"))
 
     # ================= Logging =================
     def _ensure_logger(self):
@@ -217,9 +234,11 @@ class VehiculoClient:
                     self._log_writer.writerow([epoch, human, origin, speed, battery, temp, direction])
                     self._log_file.flush()
             else:
+                # mantenemos jsonl para logs
+                import json
                 record = {"ts": epoch, "human": human, "origin": origin, "speed": speed,
                           "battery": battery, "temp": temp, "dir": direction}
-                self._log_file.write(json.dumps(record, ensure_ascii=False) + '\n')
+                self._log_file.write(__import__('json').dumps(record, ensure_ascii=False) + '\n')
                 self._log_file.flush()
         except Exception as e:
             print('[LOG] Error escribiendo telemetría:', e)
@@ -237,4 +256,3 @@ class VehiculoClient:
         except Exception:
             pass
         self.root.destroy()
-
