@@ -9,26 +9,28 @@ public class Cliente {
     public void conectar(String host, int puerto) throws IOException {
         socket = new Socket(host, puerto);
         System.out.println("Conectado al servidor " + host + ":" + puerto);
-
-        in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-        out = new PrintWriter(socket.getOutputStream(), true);
+        in  = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
+        out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), "UTF-8"), true);
     }
 
-    public void enviarMensaje(String json) {
-        out.println(json);
-    }
+    // ===== Envío de texto (una línea por mensaje) =====
+    public void enviarLinea(String line) { out.println(line); }
 
-    public String recibirMensaje() throws IOException {
-        return in.readLine();
-    }
+    // Helpers del protocolo
+    public void hello()                      { enviarLinea("HELLO TLP/1.0"); }
+    public void subscribe()                  { enviarLinea("SUBSCRIBE"); }
+    public void authAdmin(String token)      { enviarLinea("AUTH ADMIN " + token); }
+    public void listUsers()                  { enviarLinea("LIST USERS"); }
+    public void command(String cmdWithSpace) { enviarLinea("COMMAND " + cmdWithSpace); }
+    // Ejemplos: command("SPEED UP"), command("SLOW DOWN"), command("TURN LEFT"), command("TURN RIGHT")
 
-    public BufferedReader getInputStream() {
-        return in;
-    }
+    // ===== Recepción =====
+    public String recibirLinea() throws IOException { return in.readLine(); }
+    public BufferedReader getInputStream() { return in; }
 
     public void cerrar() throws IOException {
-        in.close();
-        out.close();
-        socket.close();
+        try { in.close(); }  catch (Exception ignore) {}
+        try { out.close(); } catch (Exception ignore) {}
+        try { socket.close(); } catch (Exception ignore) {}
     }
 }

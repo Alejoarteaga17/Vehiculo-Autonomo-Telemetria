@@ -2,8 +2,8 @@ import java.io.BufferedReader;
 import java.io.IOException;
 
 public class TelemetriaListener extends Thread {
-    private BufferedReader in;
-    private UICliente ui;
+    private final BufferedReader in;
+    private final UICliente ui;
 
     public TelemetriaListener(BufferedReader in, UICliente ui) {
         this.in = in;
@@ -13,28 +13,35 @@ public class TelemetriaListener extends Thread {
     @Override
     public void run() {
         try {
-            String mensaje;
-            while ((mensaje = in.readLine()) != null) {
-                System.out.println("Servidor → " + mensaje);
+            String line;
+            while ((line = in.readLine()) != null) {
+                System.out.println("Servidor → " + line);
 
-                if (mensaje.contains("TELEMETRY")) {
+                if (line.startsWith("TELEMETRY")) {
+                    // Ej: TELEMETRY speed=12 battery=92 temp=25 dir=LEFT ts=1759525432
                     String velocidad = "--", bateria = "--", temperatura = "--", direccion = "--";
 
-                    if (mensaje.contains("speed")) {
-                        velocidad = mensaje.split("\"speed\":")[1].split(",")[0];
+                    String[] parts = line.split("\\s+");
+                    for (int i = 1; i < parts.length; i++) {
+                        int eq = parts[i].indexOf('=');
+                        if (eq <= 0) continue;
+                        String k = parts[i].substring(0, eq);
+                        String v = parts[i].substring(eq + 1);
+                        switch (k) {
+                            case "speed":   velocidad   = v; break;
+                            case "battery": bateria     = v; break;
+                            case "temp":    temperatura = v; break;
+                            case "dir":     direccion   = v; break;
+                            default: break;
+                        }
                     }
-                    if (mensaje.contains("battery")) {
-                        bateria = mensaje.split("\"battery\":")[1].split(",")[0];
-                    }
-                    if (mensaje.contains("\"temp\":")) {
-                        temperatura = mensaje.split("\"temp\":")[1].split(",")[0];
-                    }
-                    if (mensaje.contains("dir")) {
-                        direccion = mensaje.split("\"dir\":\"")[1].split("\"")[0];
-                    }
-
                     ui.actualizarDatos(velocidad, bateria, temperatura, direccion);
+                    continue;
                 }
+
+                // Puedes manejar OK/ERROR/USERS aquí si quieres
+                // if (line.startsWith("OK")) { ... }
+                // if (line.startsWith("ERROR")) { ... }
             }
         } catch (IOException e) {
             System.out.println("Error escuchando telemetría: " + e.getMessage());

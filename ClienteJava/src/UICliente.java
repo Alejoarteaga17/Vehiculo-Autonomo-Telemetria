@@ -5,25 +5,23 @@ import java.time.format.DateTimeFormatter;
 
 public class UICliente extends JFrame {
     private JLabel lblVelocidad, lblBateria, lblTemperatura, lblDireccion, lblUltimaActualizacion;
-    private JButton btnSpeedUp, btnSlowDown, btnLeft, btnRight;
-    private Cliente cliente;
-    private DateTimeFormatter formatoHora = DateTimeFormatter.ofPattern("HH:mm:ss");
+    private JButton btnSpeedUp, btnSlowDown, btnLeft, btnRight, btnListUsers;
+    private final Cliente cliente;
+    private final DateTimeFormatter formatoHora = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     public UICliente(Cliente cliente, boolean esAdmin) {
         this.cliente = cliente;
 
         setTitle("Panel de Vehículo Autónomo");
-        setSize(450, 350);
+        setSize(480, 380);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
         setLayout(new BorderLayout(10, 10));
 
-        // Titulo
         JLabel titulo = new JLabel("Monitoreo de Vehículo Autónomo", SwingConstants.CENTER);
         titulo.setFont(new Font("Arial", Font.BOLD, 18));
         add(titulo, BorderLayout.NORTH);
 
-        // Panel central con datos
         JPanel panelDatos = new JPanel(new GridLayout(5, 1, 5, 5));
         lblVelocidad = new JLabel("Velocidad: -- km/h", SwingConstants.CENTER);
         lblBateria = new JLabel("Batería: -- %", SwingConstants.CENTER);
@@ -45,32 +43,33 @@ public class UICliente extends JFrame {
         panelDatos.add(lblUltimaActualizacion);
         add(panelDatos, BorderLayout.CENTER);
 
-        // Panel inferior con botones (solo si es admin)
+        JPanel panelInferior = new JPanel(new GridLayout(esAdmin ? 2 : 1, 2, 10, 10));
+        btnListUsers = new JButton("LIST USERS");
+        panelInferior.add(btnListUsers);
+        btnListUsers.addActionListener(e -> cliente.listUsers());
+
         if (esAdmin) {
-            JPanel panelBotones = new JPanel(new GridLayout(2, 2, 10, 10));
             btnSpeedUp = new JButton("SPEED UP");
             btnSlowDown = new JButton("SLOW DOWN");
             btnLeft = new JButton("TURN LEFT");
             btnRight = new JButton("TURN RIGHT");
 
             Font f = new Font("Arial", Font.BOLD, 14);
-            btnSpeedUp.setFont(f);
-            btnSlowDown.setFont(f);
-            btnLeft.setFont(f);
-            btnRight.setFont(f);
+            btnSpeedUp.setFont(f); btnSlowDown.setFont(f);
+            btnLeft.setFont(f);     btnRight.setFont(f);
 
-            panelBotones.add(btnSpeedUp);
-            panelBotones.add(btnSlowDown);
-            panelBotones.add(btnLeft);
-            panelBotones.add(btnRight);
-            add(panelBotones, BorderLayout.SOUTH);
+            panelInferior.add(btnSpeedUp);
+            panelInferior.add(btnSlowDown);
+            panelInferior.add(btnLeft);
+            panelInferior.add(btnRight);
 
-            btnSpeedUp.addActionListener(e -> cliente.enviarMensaje("{\"t\":\"CMD\",\"name\":\"SPEED_UP\"}"));
-            btnSlowDown.addActionListener(e -> cliente.enviarMensaje("{\"t\":\"CMD\",\"name\":\"SLOW_DOWN\"}"));
-            btnLeft.addActionListener(e -> cliente.enviarMensaje("{\"t\":\"CMD\",\"name\":\"TURN_LEFT\"}"));
-            btnRight.addActionListener(e -> cliente.enviarMensaje("{\"t\":\"CMD\",\"name\":\"TURN_RIGHT\"}"));
+            btnSpeedUp.addActionListener(e -> cliente.command("SPEED UP"));
+            btnSlowDown.addActionListener(e -> cliente.command("SLOW DOWN"));
+            btnLeft.addActionListener(e   -> cliente.command("TURN LEFT"));
+            btnRight.addActionListener(e  -> cliente.command("TURN RIGHT"));
         }
 
+        add(panelInferior, BorderLayout.SOUTH);
         setVisible(true);
     }
 
