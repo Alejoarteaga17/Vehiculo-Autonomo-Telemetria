@@ -18,7 +18,7 @@ LOGFILE  ?= server.log
 
 all: $(BIN)
 
-$(BIN): $(SRC) protocol.h
+$(BIN): $(SRC)
 	$(CC) $(CFLAGS) $(SRC) -o $(BIN) $(LDFLAGS)
 
 debug: CFLAGS := $(CFLAGS) $(DBGFLAGS)
@@ -34,7 +34,7 @@ clean:
 # Opcional: formateo si tienes clang-format instalado
 format:
 	@command -v clang-format >/dev/null 2>&1 && \
-	clang-format -i $(SRC) protocol.h || \
+	clang-format -i $(SRC) \
 	echo "clang-format no encontrado (omitido)"
 
 help:

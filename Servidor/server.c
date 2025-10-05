@@ -8,7 +8,6 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <strings.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -16,13 +15,13 @@
 #include <time.h>
 #include <unistd.h>
 #include <netinet/tcp.h>
-//#include "protocol.h"
 
 #define BACKLOG 128
 #define MAX_LINE 1024
 #define MAX_CLIENTS 20
 #define ADMIN_TOKEN "SECRETO_2025"
 #define TELEMETRY_PERIOD_SEC 10
+#define OVERHEAT_BLOCK_C 92
 
 typedef enum { DIR_LEFT, DIR_RIGHT, DIR_STRAIGHT } direction_t;
 
@@ -39,6 +38,8 @@ typedef struct client_s {
     int fd;
     struct sockaddr_storage addr;
     socklen_t addrlen;
+    char ip[INET_ADDRSTRLEN];
+    int  port;
     role_t role;
     time_t connected_at;
     bool subscribed;
@@ -54,8 +55,10 @@ static pthread_mutex_t g_log_mtx = PTHREAD_MUTEX_INITIALIZER;
 static client_t* g_clients = NULL;
 static pthread_mutex_t g_clients_mtx = PTHREAD_MUTEX_INITIALIZER;
 
-static vehicle_state_t g_state = { .speed=0, .battery=100, .temp=25, .dir=DIR_STRAIGHT };
+static vehicle_state_t g_state = { .speed=10, .battery=100, .temp=15, .dir=DIR_STRAIGHT };
 static pthread_mutex_t g_state_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+static int g_turn_ticks = 0;
 
 static volatile sig_atomic_t g_running = 1;
 
@@ -83,17 +86,6 @@ static void log_msg(const char* fmt, ...) {
     pthread_mutex_unlock(&g_log_mtx);
 }
 
-static void addr_to_text(struct sockaddr* sa, char* out, size_t outlen) {
-    char host[NI_MAXHOST], serv[NI_MAXSERV];
-    int rc = getnameinfo(sa, (sa->sa_family==AF_INET? sizeof(struct sockaddr_in): sizeof(struct sockaddr_in6)),
-                         host, sizeof(host), serv, sizeof(serv),
-                         NI_NUMERICHOST | NI_NUMERICSERV);
-    if (rc==0) {
-        snprintf(out, outlen, "%s:%s", host, serv);
-    } else {
-        snprintf(out, outlen, "unknown");
-    }
-}
 
 // Enviar todo manejando envíos parciales e interrupciones
 static ssize_t send_all(int fd, const char* buf, size_t len) {
@@ -214,6 +206,10 @@ static bool maybe_reject_for_policy(const char* cmd, char* reason, size_t rcap) 
     vehicle_state_t s;
     pthread_mutex_lock(&g_state_mtx); s=g_state; pthread_mutex_unlock(&g_state_mtx);
 
+    if (!strcmp(cmd,"SPEED UP") && s.temp >= OVERHEAT_BLOCK_C) {
+        snprintf(reason, rcap, "overheat"); 
+        return true;
+    }
     if (!strcmp(cmd,"SPEED UP") && s.battery < 10) {
         snprintf(reason, rcap, "low_battery");
         return true;
@@ -231,13 +227,19 @@ static void apply_command(const char* cmd) {
         g_state.speed += 5;
         if (g_state.speed > 120) g_state.speed = 120;
         if (g_state.battery>0) g_state.battery -= 1;
+        g_state.temp += 3;               
+        if (g_state.temp > 95) g_state.temp = 95;
+
     } else if (!strcmp(cmd,"SLOW DOWN")) {
         g_state.speed -= 5;
         if (g_state.speed < 0) g_state.speed = 0;
+        if (g_state.temp > 20) g_state.temp -= 1;
     } else if (!strcmp(cmd,"TURN LEFT")) {
         g_state.dir = DIR_LEFT;
+        g_turn_ticks = 2;
     } else if (!strcmp(cmd,"TURN RIGHT")) {
         g_state.dir = DIR_RIGHT;
+        g_turn_ticks = 2;
     }
     pthread_mutex_unlock(&g_state_mtx);
 }
@@ -248,6 +250,16 @@ static void* telemetry_thread_fn(void* _arg) {
     while (g_running) {
         for (int i=0;i<TELEMETRY_PERIOD_SEC && g_running;i++) sleep(1);
         if (!g_running) break;
+
+        pthread_mutex_lock(&g_state_mtx);
+        if (g_state.dir != DIR_STRAIGHT && g_turn_ticks > 0) {
+            g_turn_ticks--;
+            if (g_turn_ticks == 0) {
+                g_state.dir = DIR_STRAIGHT;   // volver al centro
+            }
+        }
+        pthread_mutex_unlock(&g_state_mtx);
+
         broadcast_telemetry();
     }
     return NULL;
@@ -258,10 +270,12 @@ static void list_users_to_client(int fd) {
     int n=0; for (client_t* c=g_clients;c;c=c->next) n++;
     char hdr[64]; snprintf(hdr,sizeof(hdr),"USERS %d",n);
     send_line(fd,hdr);
+    char line[256];
     for (client_t* c=g_clients;c;c=c->next) {
-        char at[128]; addr_to_text((struct sockaddr*)&c->addr, at, sizeof(at));
-        char line[256];
-        snprintf(line,sizeof(line),"USER %s %s %ld", at, (c->role==ROLE_ADMIN?"ADMIN":"OBSERVER"), (long)c->connected_at);
+        snprintf(line, sizeof(line), "USER %s:%d %s %ld",
+                 c->ip, c->port,
+                 (c->role == ROLE_ADMIN ? "ADMIN" : "OBSERVER"),
+                 (long)c->connected_at);
         send_line(fd,line);
     }
     pthread_mutex_unlock(&g_clients_mtx);
@@ -269,8 +283,7 @@ static void list_users_to_client(int fd) {
 
 static void* client_thread_fn(void* arg) {
     client_t* self = (client_t*)arg;
-    char who[128]; addr_to_text((struct sockaddr*)&self->addr, who, sizeof(who));
-    log_msg("CLIENT CONNECT %s", who);
+    log_msg("CLIENT CONNECT %s:%d", self->ip, self->port);
 
     send_line(self->fd, "OK Welcome to TLP/1.0");
     self->subscribed = true; 
@@ -278,11 +291,11 @@ static void* client_thread_fn(void* arg) {
     char buf[MAX_LINE];
     while (g_running) {
         int n = recv_line(self->fd, buf, sizeof(buf));
-        if (n==0) { log_msg("CLIENT FIN %s", who); break; }
-        if (n<0)  { log_msg("CLIENT ERROR RECV %s: %s", who, strerror(errno)); break; }
+        if (n==0) { log_msg("CLIENT FIN %s:%d", self->ip, self->port); break; }
+        if (n<0)  { log_msg("CLIENT ERROR RECV %s:%d: %s", self->ip, self->port, strerror(errno)); break; }
         // Normaliza espacios
         while (n>0 && (buf[n-1]==' ')) { buf[--n]='\0'; }
-        log_msg("REQ %s -> %s", who, buf);
+        log_msg("REQ %s:%d -> %s", self->ip, self->port, buf);
 
         if (!strncmp(buf,"HELLO",5)) {
             send_line(self->fd, "OK HELLO");
@@ -325,7 +338,7 @@ static void* client_thread_fn(void* arg) {
     // Cierre
     self->alive=false;
     remove_client(self->fd);
-    log_msg("CLIENT CLOSED %s", who);
+    log_msg("CLIENT CLOSED %s:%d", self->ip, self->port);
     return NULL;
 }
 
@@ -354,7 +367,7 @@ int main(int argc, char** argv) {
     // --- Socket de escucha: SOCK_STREAM (TCP) ---
     struct addrinfo hints, *res, *rp;
     memset(&hints,0,sizeof(hints));
-    hints.ai_family   = AF_UNSPEC;       // 
+    hints.ai_family   = AF_INET;       // 
     hints.ai_socktype = SOCK_STREAM;     // estamos usando SOCK_STREAM
     hints.ai_flags    = AI_PASSIVE;
 
@@ -370,7 +383,6 @@ int main(int argc, char** argv) {
         if (listen_fd<0) continue;
 
         int yes=1; setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-        int ka=1;  setsockopt(listen_fd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka));
 
         if (bind(listen_fd, rp->ai_addr, rp->ai_addrlen)==0) {
             if (listen(listen_fd, BACKLOG)==0) break;
@@ -409,21 +421,12 @@ int main(int argc, char** argv) {
         // TCP_NODELAY 
         int nd=1; setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &nd, sizeof(nd));
 
-        // Keepalive por conexión 
-        int ka=1; setsockopt(cfd, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka));
-        // Tuning de keepalive (Linux)
-        #ifdef TCP_KEEPIDLE
-        int idle=60;  setsockopt(cfd, IPPROTO_TCP, TCP_KEEPIDLE,  &idle, sizeof(idle));
-        #endif
-        #ifdef TCP_KEEPINTVL
-        int intvl=10; setsockopt(cfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
-        #endif
-        #ifdef TCP_KEEPCNT
-        int cnt=3;    setsockopt(cfd, IPPROTO_TCP, TCP_KEEPCNT,   &cnt, sizeof(cnt));
-        #endif
-
         client_t* c = calloc(1,sizeof(*c));
         c->fd = cfd; c->addr = cliaddr; c->addrlen=clilen; c->role=ROLE_OBSERVER; c->connected_at=time(NULL); c->subscribed=true; c->alive=true;
+
+        struct sockaddr_in* sin = (struct sockaddr_in*)&cliaddr;  
+        inet_ntop(AF_INET, &sin->sin_addr, c->ip, sizeof(c->ip));
+        c->port = (int)ntohs(sin->sin_port);
 
         add_client(c);
 
