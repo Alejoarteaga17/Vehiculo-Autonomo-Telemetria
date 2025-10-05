@@ -16,6 +16,7 @@ public class TelemetriaListener extends Thread {
             String line;
             while ((line = in.readLine()) != null) {
                 System.out.println("Servidor → " + line);
+                LoggerCliente.info("Servidor → " + line);
 
                 if (line.startsWith("TELEMETRY")) {
                     // Ej: TELEMETRY speed=12 battery=92 temp=25 dir=LEFT ts=1759525432
@@ -38,12 +39,9 @@ public class TelemetriaListener extends Thread {
                     ui.actualizarDatos(velocidad, bateria, temperatura, direccion);
                     continue;
                 }
-
-                // Puedes manejar OK/ERROR/USERS aquí si quieres
-                // if (line.startsWith("OK")) { ... }
-                // if (line.startsWith("ERROR")) { ... }
             }
         } catch (IOException e) {
+            LoggerCliente.error("Error escuchando telemetría: " + e.getMessage());
             System.out.println("Error escuchando telemetría: " + e.getMessage());
         }
     }

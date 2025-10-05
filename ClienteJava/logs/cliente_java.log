@@ -1,0 +1,56 @@
+Oct 04, 2025 9:55:16 PM LoggerCliente info
+INFO: Conectado al servidor 172.26.208.26:8080
+Oct 04, 2025 9:55:36 PM LoggerCliente info
+INFO: Servidor → OK Welcome to TLP/1.0
+Oct 04, 2025 9:55:36 PM LoggerCliente info
+INFO: Servidor → TELEMETRY speed=0 battery=100 temp=25 dir=STRAIGHT ts=1759632925
+Oct 04, 2025 9:55:36 PM LoggerCliente info
+INFO: Servidor → TELEMETRY speed=0 battery=100 temp=25 dir=STRAIGHT ts=1759632935
+Oct 04, 2025 9:55:36 PM LoggerCliente info
+INFO: Servidor → OK HELLO
+Oct 04, 2025 9:55:36 PM LoggerCliente info
+INFO: Servidor → OK SUBSCRIBED
+Oct 04, 2025 9:55:36 PM LoggerCliente info
+INFO: Servidor → OK AUTH ADMIN
+Oct 04, 2025 9:55:43 PM LoggerCliente info
+INFO: Servidor → USERS 2
+Oct 04, 2025 9:55:43 PM LoggerCliente info
+INFO: Servidor → USER 172.26.208.26:49562 ADMIN 1759632916
+Oct 04, 2025 9:55:43 PM LoggerCliente info
+INFO: Servidor → USER 127.0.0.1:57164 ADMIN 1759618629
+Oct 04, 2025 9:55:46 PM LoggerCliente info
+INFO: Servidor → TELEMETRY speed=0 battery=100 temp=25 dir=STRAIGHT ts=1759632946
+Oct 04, 2025 9:55:48 PM LoggerCliente info
+INFO: Comando enviado: SPEED UP
+Oct 04, 2025 9:55:48 PM LoggerCliente info
+INFO: Servidor → OK EXECUTED
+Oct 04, 2025 9:55:55 PM LoggerCliente info
+INFO: Comando enviado: SPEED UP
+Oct 04, 2025 9:55:55 PM LoggerCliente info
+INFO: Servidor → OK EXECUTED
+Oct 04, 2025 9:55:56 PM LoggerCliente info
+INFO: Servidor → TELEMETRY speed=10 battery=98 temp=25 dir=STRAIGHT ts=1759632956
+Oct 04, 2025 9:55:58 PM LoggerCliente info
+INFO: Comando enviado: SPEED UP
+Oct 04, 2025 9:55:58 PM LoggerCliente info
+INFO: Servidor → OK EXECUTED
+Oct 04, 2025 9:56:04 PM LoggerCliente info
+INFO: Comando enviado: SPEED UP
+Oct 04, 2025 9:56:04 PM LoggerCliente info
+INFO: Servidor → OK EXECUTED
+Oct 04, 2025 9:56:06 PM LoggerCliente info
+INFO: Servidor → TELEMETRY speed=20 battery=96 temp=25 dir=STRAIGHT ts=1759632966
+Oct 04, 2025 9:56:16 PM LoggerCliente info
+INFO: Servidor → TELEMETRY speed=20 battery=96 temp=25 dir=STRAIGHT ts=1759632976
+Oct 04, 2025 9:56:27 PM LoggerCliente info
+INFO: Servidor → TELEMETRY speed=20 battery=96 temp=25 dir=STRAIGHT ts=1759632987
+Oct 04, 2025 9:56:37 PM LoggerCliente info
+INFO: Servidor → TELEMETRY speed=20 battery=96 temp=25 dir=STRAIGHT ts=1759632997
+Oct 04, 2025 9:56:47 PM LoggerCliente info
+INFO: Servidor → TELEMETRY speed=20 battery=96 temp=25 dir=STRAIGHT ts=1759633007
+Oct 04, 2025 9:56:58 PM LoggerCliente info
+INFO: Servidor → TELEMETRY speed=20 battery=96 temp=25 dir=STRAIGHT ts=1759633018
+Oct 04, 2025 9:57:08 PM LoggerCliente info
+INFO: Servidor → TELEMETRY speed=20 battery=96 temp=25 dir=STRAIGHT ts=1759633028
+Oct 04, 2025 9:57:18 PM LoggerCliente info
+INFO: Servidor → TELEMETRY speed=20 battery=96 temp=25 dir=STRAIGHT ts=1759633038

@@ -63,10 +63,25 @@ public class UICliente extends JFrame {
             panelInferior.add(btnLeft);
             panelInferior.add(btnRight);
 
-            btnSpeedUp.addActionListener(e -> cliente.command("SPEED UP"));
-            btnSlowDown.addActionListener(e -> cliente.command("SLOW DOWN"));
-            btnLeft.addActionListener(e   -> cliente.command("TURN LEFT"));
-            btnRight.addActionListener(e  -> cliente.command("TURN RIGHT"));
+            btnSpeedUp.addActionListener(e -> {
+                cliente.command("SPEED UP");
+                LoggerCliente.info("Comando enviado: SPEED UP");
+            });
+
+            btnSlowDown.addActionListener(e -> {
+                cliente.command("SLOW DOWN");
+                LoggerCliente.info("Comando enviado: SLOW DOWN");
+            });
+
+            btnLeft.addActionListener(e -> {
+                cliente.command("TURN LEFT");
+                LoggerCliente.info("Comando enviado: TURN LEFT");
+            });
+
+            btnRight.addActionListener(e -> {
+                cliente.command("TURN RIGHT");
+                LoggerCliente.info("Comando enviado: TURN RIGHT");
+            });
         }
 
         add(panelInferior, BorderLayout.SOUTH);
