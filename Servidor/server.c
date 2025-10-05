@@ -115,10 +115,10 @@ static int recv_line(int fd, char* buf, size_t cap) {
     while (i < cap-1) {
         char c;
         ssize_t r = recv(fd, &c, 1, 0);
-        if (r==0) return 0;        // FIN
+        if (r==0) return 0; // FIN
         if (r<0) {
             if (errno==EINTR) continue;
-            return -1;             // error
+            return -1; // error
         }
         if (c=='\r') continue;
         if (c=='\n') { buf[i]='\0'; return (int)i; }
@@ -160,7 +160,7 @@ static int client_count(void) {
     return n;
 }
 
-// Enviar telemetría a todos (sin bloquear el lock durante send())
+// Enviar telemetría a todos 
 static void broadcast_telemetry(void) {
     vehicle_state_t s;
     pthread_mutex_lock(&g_state_mtx); s = g_state; pthread_mutex_unlock(&g_state_mtx);
@@ -172,7 +172,6 @@ static void broadcast_telemetry(void) {
         "TELEMETRY speed=%d battery=%d temp=%d dir=%s ts=%ld",
         s.speed, s.battery, s.temp, d, (long)now);
 
-    // Snapshot de fds/subscribed/alive
     int n=0;
     pthread_mutex_lock(&g_clients_mtx);
     for (client_t* c=g_clients; c; c=c->next) n++;
@@ -185,7 +184,6 @@ static void broadcast_telemetry(void) {
     }
     pthread_mutex_unlock(&g_clients_mtx);
 
-    // Enviar fuera del lock y recolectar fallidos
     int *to_close = (int*)malloc(sizeof(int)*n);
     int nc=0;
     for (int k=0; k<n; ++k) {
@@ -202,7 +200,6 @@ static void broadcast_telemetry(void) {
 
 // --- Lógica de comandos ---
 static bool maybe_reject_for_policy(const char* cmd, char* reason, size_t rcap) {
-    // Ejemplo: si batería < 10%, no acelerar; si velocidad 0, no “slow down”
     vehicle_state_t s;
     pthread_mutex_lock(&g_state_mtx); s=g_state; pthread_mutex_unlock(&g_state_mtx);
 
@@ -255,7 +252,7 @@ static void* telemetry_thread_fn(void* _arg) {
         if (g_state.dir != DIR_STRAIGHT && g_turn_ticks > 0) {
             g_turn_ticks--;
             if (g_turn_ticks == 0) {
-                g_state.dir = DIR_STRAIGHT;   // volver al centro
+                g_state.dir = DIR_STRAIGHT;   // Volver s straight
             }
         }
         pthread_mutex_unlock(&g_state_mtx);
@@ -367,8 +364,8 @@ int main(int argc, char** argv) {
     // --- Socket de escucha: SOCK_STREAM (TCP) ---
     struct addrinfo hints, *res, *rp;
     memset(&hints,0,sizeof(hints));
-    hints.ai_family   = AF_INET;       // 
-    hints.ai_socktype = SOCK_STREAM;     // estamos usando SOCK_STREAM
+    hints.ai_family   = AF_INET;    
+    hints.ai_socktype = SOCK_STREAM;  
     hints.ai_flags    = AI_PASSIVE;
 
     int rc = getaddrinfo(NULL, port, &hints, &res);
