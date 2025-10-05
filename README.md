@@ -7,7 +7,7 @@ Repositorio asociado al proyecto de la clase de Internet, Arquitectura y Protoco
 - Alejandra Suarez.
 - Paula Llanos.
 - Alejandro Arteaga.
-  
+
 El link del video [aquí](https://youtu.be/yQpsJ_7y2bY?si=PgxiX9djD8OG34El).
 
 ### Requisitos
@@ -16,25 +16,42 @@ El link del video [aquí](https://youtu.be/yQpsJ_7y2bY?si=PgxiX9djD8OG34El).
 - Servidor de telemetría ejecutándose
 - Linux para iniciar el servidor
 
+## **Es necesario clonar el repositorio:**
+   ```bash
+   git clone https://github.com/Alejoarteaga17/Vehiculo-Autonomo-Telemetria
+   ```
+- Luego ingresar a la carpeta del repositorio clonado y sigue los pasos para hacer la ejecución del cliente-servidor
+
 ## **Quick Start con Servidor C**
 
 ### **Para usar con el servidor C real:**
 
-1. **Compilar servidor C(en linux CLI):**
+1. **Compilar servidor C(en linux CLI) :**
    ```bash
    cd Servidor
-   gcc -o server server.c -lpthread
+   make
    ```
 
 2. **Ejecutar servidor C:**
    ```bash
-   ./server 5000 server.log
+   make run
    ```
 
 3. **Ejecutar cliente Python compatible:**
    ```bash
-   cd Cliente-1
-   python main_json.py
+   cd ClientePython
+   python Main.py
+   ```
+4. **Ejecutar cliente Python:**
+   - **Compilar archivos Java:**
+    ```bash
+   cd ClientePython
+   javac *.java
+   ```
+
+   - **Ejecutar Main Java:**
+    ```bash
+     java Main
    ```
 
 ### **Token de Administrador:**
@@ -42,24 +59,15 @@ El link del video [aquí](https://youtu.be/yQpsJ_7y2bY?si=PgxiX9djD8OG34El).
 - Configurable en `client_config_json.json`
 
 ### Funcionalidades Principales
-- **Modo Administrador**: Control completo del vehículo + visualización de telemetría
+- **Modo Administrador**: Control completo del vehículo sobre la direccion y la velocidad + visualización de telemetría
 - **Modo Observador**: Solo visualización de telemetría
 - **Interfaz gráfica intuitiva** con indicadores de estado
-- **Reconexión automática** en caso de pérdida de conexión
-- **Configuración externa** mediante archivo JSON
 - **Validación de datos** de telemetría
 - **Información actualizada** en la GUI se actualiza el tiempo de transmisión de datos
+- **Almacenar Registros** mediante logs almacenamos los registros de cambios en el servidor y en los clientes
 
 ### Comandos (Solo Administrador)
 - `SPEED UP` - Acelerar vehículo
 - `SLOW DOWN` - Reducir velocidad
 - `TURN LEFT` - Girar a la izquierda
 - `TURN RIGHT` - Girar a la derecha
-
-### Datos de Telemetría
-Formato: `DATA SPEED=30 BATTERY=80 TEMP=27`
-- **SPEED**: Velocidad en km/h
-- **BATTERY**: Nivel de batería (0-100%)
-- **TEMP**: Temperatura en °C
-
-
