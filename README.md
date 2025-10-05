@@ -9,6 +9,7 @@ Repositorio asociado al proyecto de la clase de Internet, Arquitectura y Protoco
 - Alejandro Arteaga.
 
 El link del video [aquí](https://youtu.be/yQpsJ_7y2bY?si=PgxiX9djD8OG34El).
+## ¿Cómo correr el proyecto?
 
 ### Requisitos
 - Python 3.7+
@@ -16,7 +17,7 @@ El link del video [aquí](https://youtu.be/yQpsJ_7y2bY?si=PgxiX9djD8OG34El).
 - Servidor de telemetría ejecutándose
 - Linux para iniciar el servidor
 
-## **Es necesario clonar el repositorio:**
+## **Clonar el repositorio:**
    ```bash
    git clone https://github.com/Alejoarteaga17/Vehiculo-Autonomo-Telemetria
    ```
@@ -42,6 +43,7 @@ El link del video [aquí](https://youtu.be/yQpsJ_7y2bY?si=PgxiX9djD8OG34El).
    cd ClientePython
    python Main.py
    ```
+   
 4. **Ejecutar cliente Python:**
    - **Compilar archivos Java:**
     ```bash
