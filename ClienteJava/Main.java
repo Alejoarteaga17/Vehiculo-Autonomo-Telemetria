@@ -5,7 +5,7 @@ import java.io.IOException;
 
 public class Main {
     public static void main(String[] args) {
-        String host = "172.26.208.26";
+        String host = "127.0.0.1";
         int puerto = 8080;
         try {
             Cliente cliente = new Cliente();
