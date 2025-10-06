@@ -327,6 +327,13 @@ static void* client_thread_fn(void* arg) {
             }
             apply_command(cmd);
             send_line(self->fd, "OK EXECUTED");
+
+        } else if (!strncmp(buf, "QUIT", 4) || !strncmp(buf, "BYE", 3)) {
+            
+            send_line(self->fd, "OK BYE");
+            log_msg("CLIENT REQ QUIT %s:%d", self->ip, self->port);
+            break;
+
         } else {
             send_line(self->fd, "ERROR BAD_REQUEST syntax");
         }
