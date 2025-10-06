@@ -7,23 +7,23 @@ import os
 import csv
 
 class VehiculoClient:
+    # Debemos tener el mismo puerto que iniciamos en el servidor
     def __init__(self, host="127.0.0.1", port=8080, admin=False, token=None,
-                 log_dir="logs", log_format="csv"):
+                log_dir="logs", log_format="csv"):
         self.host = host
         self.port = port
         self.admin = admin
         self.token = token or ("SECRETO_2025" if admin else None)
         self.log_dir = log_dir
-        self.log_format = log_format.lower()  # 'csv' o 'json'
+        self.log_format = log_format.lower()  # 'csv'
         self._log_file = None
         self._log_writer = None
         self._ensure_logger()
-
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._recv_thread = None
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) # TCP socket bidireccional
+        self._recv_thread = None # Hilos para recepción de datos
         self._stop = threading.Event()
 
-        # GUI
+        # Datos que vamos a mostrar en la interfaz gráfica
         self.root = tk.Tk()
         self.root.title(f"Cliente Vehículo Autónomo ({'Admin' if admin else 'Observer'})")
         self.speed_label = tk.Label(self.root, text="Velocidad: --")
@@ -60,10 +60,10 @@ class VehiculoClient:
             self.btn_list = tk.Button(self.root, text="List Users", command=self.list_users)
             self.btn_list.pack(pady=4)
 
-        # Cerrar limpio
+
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
-    # ================= Conexión =================
+    # Conexión 
     def connect(self):
         try:
             self.sock.connect((self.host, self.port))
@@ -73,7 +73,7 @@ class VehiculoClient:
             if self.admin:
                 self._send_line(f"AUTH ADMIN {self.token}")
 
-            # Thread recepción
+            # Inicializamos hilo de recepción
             self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
             self._recv_thread.start()
 
@@ -81,7 +81,8 @@ class VehiculoClient:
         except Exception as e:
             messagebox.showerror("Error de conexión", str(e))
 
-    # ================= Recepción =================
+    # Recepción 
+
     def _recv_loop(self):
         buffer = ""
         try:
@@ -89,7 +90,7 @@ class VehiculoClient:
                 chunk = self.sock.recv(2048)
                 if not chunk:
                     break
-                buffer += chunk.decode(errors='replace')
+                buffer += chunk.decode(errors='replace') # acumulamos en buffer
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     line = line.strip()
@@ -101,12 +102,7 @@ class VehiculoClient:
             self.status_label.config(text="Estado: Desconectado")
 
     def _handle_line(self, line: str):
-        # Ejemplos válidos:
-        #   OK Welcome to TLP/1.0
-        #   OK AUTH ADMIN
-        #   ERROR AUTH bad_token
-        #   TELEMETRY speed=12 battery=92 temp=25 dir=LEFT ts=1759525432
-        #   USERS 3 \n USER 127.0.0.1:53231 OBSERVER 1759... \n ...
+        # Procesamos línea recibida
         if line.startswith("TELEMETRY"):
             data = self._parse_telemetry_line(line)
             if data:
@@ -122,9 +118,10 @@ class VehiculoClient:
                 self._set_status(line)
             return
         if line.startswith("USER "):
-            # Puedes imprimirlos en consola o mostrarlos en un popup
+            # Podemos imprimirlos en consola 
             print(line)
             return
+        # Respuestas a comandos enviados desde admin
 
         if line.startswith("OK"):
             self._set_status(line)
@@ -137,7 +134,7 @@ class VehiculoClient:
         # Desconocido/otros
         print("[INFO]", line)
 
-    # ================= Envío / Peticiones =================
+    # Envío / Peticiones
     def _send_line(self, s: str):
         try:
             # aseguramos \n
@@ -162,10 +159,9 @@ class VehiculoClient:
             return
         self._send_line("LIST USERS")
 
-    # ================= Procesamiento TELEMETRY =================
+    # Procesamiento TELEMETRY
     def _parse_telemetry_line(self, line: str):
-        # Formato:
-        # TELEMETRY speed=12 battery=92 temp=25 dir=LEFT ts=1759525432
+        # Separamos la línea en partes y extraemos los valores clave-valor
         try:
             parts = line.split()
             if parts[0] != "TELEMETRY":
@@ -186,15 +182,15 @@ class VehiculoClient:
         except Exception as e:
             print("[PARSE] Línea inválida:", line, "err:", e)
             return None
-
+    # Mostramos datos en la interfaz gráfica y los logueamos en archivo
     def _update_telemetry(self, msg, origin):
-        # (tkinter no es 100% thread-safe; usamos after para actualizar desde el hilo RX)
+        
         ts = msg.get('ts', int(time.time()))
         human = time.strftime('%H:%M:%S', time.localtime(ts))
         def apply():
-            self.speed_label.config(text=f"Velocidad: {msg.get('speed','--')}")
-            self.battery_label.config(text=f"Batería: {msg.get('battery','--')}")
-            self.temp_label.config(text=f"Temperatura: {msg.get('temp','--')}")
+            self.speed_label.config(text=f"Velocidad: {msg.get('speed','--')} km/h")
+            self.battery_label.config(text=f"Batería: {msg.get('battery','--')} %")
+            self.temp_label.config(text=f"Temperatura: {msg.get('temp','--')} °C")
             self.dir_label.config(text=f"Dirección: {msg.get('dir','--')}")
             self.last_update_label.config(text=f"Última actualización: {human} ({origin})")
         self.root.after(0, apply)
@@ -203,18 +199,20 @@ class VehiculoClient:
     def _set_status(self, text):
         self.root.after(0, lambda: self.status_label.config(text=f"Estado: {text}"))
 
-    # ================= Logging =================
+    # Logging
     def _ensure_logger(self):
         try:
             if not os.path.isdir(self.log_dir):
                 os.makedirs(self.log_dir, exist_ok=True)
             fname = time.strftime('telemetria_%Y%m%d')
             if self.log_format == 'csv':
+                # Guardamos en CSV
                 path = os.path.join(self.log_dir, fname + '.csv')
                 fresh = not os.path.exists(path)
                 self._log_file = open(path, 'a', newline='', encoding='utf-8')
                 self._log_writer = csv.writer(self._log_file)
                 if fresh:
+                    
                     self._log_writer.writerow(['epoch','human','origin','speed','battery','temp','dir'])
             else:
                 path = os.path.join(self.log_dir, fname + '.jsonl')
@@ -241,13 +239,13 @@ class VehiculoClient:
                 # mantenemos jsonl para logs, no para el protocolo
                 import json
                 record = {"ts": epoch, "human": human, "origin": origin, "speed": speed,
-                          "battery": battery, "temp": temp, "dir": direction}
+                        "battery": battery, "temp": temp, "dir": direction}
+                # Escribimos el registro en formato JSONL
                 self._log_file.write(__import__('json').dumps(record, ensure_ascii=False) + '\n')
                 self._log_file.flush()
         except Exception as e:
             print('[LOG] Error escribiendo telemetría:', e)
 
-    # ================= Cierre =================
     def close(self):
         self._stop.set()
         try:
