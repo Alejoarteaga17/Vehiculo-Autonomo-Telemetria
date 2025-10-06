@@ -13,6 +13,7 @@ El link del video [aquí](https://youtu.be/yQpsJ_7y2bY?si=PgxiX9djD8OG34El).
 
 ### Requisitos
 - Python 3.7+
+- Java 17+
 - tkinter (incluido con Python)
 - Servidor de telemetría ejecutándose
 - Linux para iniciar el servidor
@@ -41,7 +42,7 @@ El link del video [aquí](https://youtu.be/yQpsJ_7y2bY?si=PgxiX9djD8OG34El).
 3. **Ejecutar cliente Python compatible:**
    ```bash
    cd ClientePython
-   python Main.py
+   python main.py
    ```
    
 4. **Ejecutar cliente Python:**
@@ -58,13 +59,12 @@ El link del video [aquí](https://youtu.be/yQpsJ_7y2bY?si=PgxiX9djD8OG34El).
 
 ### **Token de Administrador:**
 - **Token:** `SECRETO_2025`
-- Configurable en `client_config_json.json`
 
 ### Funcionalidades Principales
-- **Modo Administrador**: Control completo del vehículo sobre la direccion y la velocidad + visualización de telemetría
-- **Modo Observador**: Solo visualización de telemetría
-- **Interfaz gráfica intuitiva** con indicadores de estado
-- **Validación de datos** de telemetría
+- **Modo Administrador**: Control completo del vehículo sobre la direccion y la velocidad + visualización de telemetría y listar usuarios conectados.
+- **Modo Observador**: Solo visualización de telemetría.
+- **Interfaz gráfica intuitiva** con indicadores de estado.
+- **Validación de datos** de telemetría.
 - **Información actualizada** en la GUI se actualiza el tiempo de transmisión de datos
 - **Almacenar Registros** mediante logs almacenamos los registros de cambios en el servidor y en los clientes
 
