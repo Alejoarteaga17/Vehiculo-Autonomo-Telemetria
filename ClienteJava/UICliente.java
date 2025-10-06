@@ -43,10 +43,13 @@ public class UICliente extends JFrame {
         panelDatos.add(lblUltimaActualizacion);
         add(panelDatos, BorderLayout.CENTER);
 
-        JPanel panelInferior = new JPanel(new GridLayout(esAdmin ? 2 : 1, 2, 10, 10));
-        btnListUsers = new JButton("LIST USERS");
-        panelInferior.add(btnListUsers);
-        btnListUsers.addActionListener(e -> cliente.listUsers());
+        JPanel panelInferior = new JPanel(new GridLayout(esAdmin ? 3 : 1, 2, 10, 10));
+
+        if (esAdmin) {
+            btnListUsers = new JButton("LIST USERS");
+            btnListUsers.addActionListener(e -> cliente.listUsers());
+            panelInferior.add(btnListUsers);
+        }
 
         if (esAdmin) {
             btnSpeedUp = new JButton("SPEED UP");
