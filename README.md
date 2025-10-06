@@ -8,7 +8,7 @@ Repositorio asociado al proyecto de la clase de Internet, Arquitectura y Protoco
 - Paula Llanos.
 - Alejandro Arteaga.
 
-El link del video [aquí](https://youtu.be/yQpsJ_7y2bY?si=PgxiX9djD8OG34El).
+
 ## ¿Cómo correr el proyecto?
 
 ### Requisitos
